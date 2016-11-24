@@ -1,0 +1,19 @@
+#include <objc/NSObject.h>
+
+@interface VideoPacket : NSObject
+
+@property uint8_t* buffer;
+@property NSInteger size;
+
+- (instancetype)initWithBuffer:(uint8_t *)buffer andSize:(NSInteger)size;
+
+@end
+
+@interface VideoFileParser : NSObject
+
+-(BOOL)open:(NSString*)fileName;
+- (void)setBuffer:(char *)buffer;
+-(VideoPacket *)nextPacket;
+-(void)close;
+
+@end

@@ -1,0 +1,32 @@
+{
+  "DVTSourceControlWorkspaceBlueprintPrimaryRemoteRepositoryKey" : "491fdb28-0276-4ac1-98f1-7f55630f072f++505",
+  "DVTSourceControlWorkspaceBlueprintWorkingCopyRepositoryLocationsKey" : {
+    "491fdb28-0276-4ac1-98f1-7f55630f072f++505" : {
+
+    }
+  },
+  "DVTSourceControlWorkspaceBlueprintWorkingCopyStatesKey" : {
+    "491fdb28-0276-4ac1-98f1-7f55630f072f++505" : 0,
+    "77F79FECD53C7A1AFDE0ED0AAE2A66FC3D4EC759" : 0
+  },
+  "DVTSourceControlWorkspaceBlueprintIdentifierKey" : "73E4F3EE-0B04-403B-AA2F-2C4C75DA0BE5",
+  "DVTSourceControlWorkspaceBlueprintWorkingCopyPathsKey" : {
+    "491fdb28-0276-4ac1-98f1-7f55630f072f++505" : "Ios_Video_Play%20(trunk)\/",
+    "77F79FECD53C7A1AFDE0ED0AAE2A66FC3D4EC759" : "..\/..\/sample\/video\/Eleven"
+  },
+  "DVTSourceControlWorkspaceBlueprintNameKey" : "AVSamplePlayer",
+  "DVTSourceControlWorkspaceBlueprintVersion" : 204,
+  "DVTSourceControlWorkspaceBlueprintRelativePathToProjectKey" : "AVSamplePlayer.xcodeproj",
+  "DVTSourceControlWorkspaceBlueprintRemoteRepositoriesKey" : [
+    {
+      "DVTSourceControlWorkspaceBlueprintRemoteRepositoryURLKey" : "svn:\/\/192.168.1.77\/ios\/Ios_Video_Play",
+      "DVTSourceControlWorkspaceBlueprintRemoteRepositorySystemKey" : "com.apple.dt.Xcode.sourcecontrol.Subversion",
+      "DVTSourceControlWorkspaceBlueprintRemoteRepositoryIdentifierKey" : "491fdb28-0276-4ac1-98f1-7f55630f072f++505"
+    },
+    {
+      "DVTSourceControlWorkspaceBlueprintRemoteRepositoryURLKey" : "https:\/\/github.com\/masterweb121\/Eleven.git",
+      "DVTSourceControlWorkspaceBlueprintRemoteRepositorySystemKey" : "com.apple.dt.Xcode.sourcecontrol.Git",
+      "DVTSourceControlWorkspaceBlueprintRemoteRepositoryIdentifierKey" : "77F79FECD53C7A1AFDE0ED0AAE2A66FC3D4EC759"
+    }
+  ]
+}

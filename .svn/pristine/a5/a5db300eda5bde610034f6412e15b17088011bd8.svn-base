@@ -1,0 +1,715 @@
+//
+//  ViewController.m
+//  AVSamplePlayer
+//
+//  Created by bingcai on 16/6/27.
+//  Copyright © 2016年 sharetronic. All rights reserved.
+//
+
+#import "ViewController.h"
+#import "Client.h"
+
+#import <AVFoundation/AVFoundation.h>
+
+#include "libavformat/avformat.h"
+#include "libswscale/swscale.h"
+#include "libswresample/swresample.h"
+#include "libavutil/pixdesc.h"
+#import "libavcodec/avcodec.h"
+
+#import "colorconvert.h"
+
+#import "H264Decoder.h"
+#import "KxMovieGLView.h"
+#import "AAPLEAGLLayer.h"
+#import "CameraShowGLView.h"
+
+#import "HardwareDecoder.h"
+
+
+@interface ViewController () <HardwareDecoderDelegate>
+
+@property (nonatomic, strong) UIImageView *imageView;
+@property (nonatomic, strong) UIActivityIndicatorView *indicatorView;
+
+@property (nonatomic, assign) CMVideoFormatDescriptionRef formatDesc;
+@property (nonatomic, assign) VTDecompressionSessionRef decompressionSession;
+@property (nonatomic, retain) AVSampleBufferDisplayLayer *videoLayer;
+@property (nonatomic, assign) int spsSize;
+@property (nonatomic, assign) int ppsSize;
+
+@end
+
+@implementation ViewController {
+
+    bool playCalled;
+    BOOL isFindIFrame;
+    
+    AVFrame *frame;
+    AVCodecContext *codecCtx;
+    
+    uint8_t *buffOut, *rgbBuffer;
+    
+//    H264Decoder
+    H264Decoder         *_decoder;
+    dispatch_queue_t    _dispatchQueue;
+    NSMutableArray      *_videoFrames;
+    KxMovieGLView       *_glView;
+    BOOL                _firstDecoded;
+    
+    AAPLEAGLLayer *_glLayer; // player
+    CameraShowGLView    *_cameraView;
+    
+    HardwareDecoder     *_hardwareDecoder;
+}
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    // Do any additional setup after loading the view, typically from a nib.
+    
+    Client *client = [[Client alloc] init];
+//    ZGK5T31JKJ98VH5W111A   7WEWXD7RHXVTB91P111A
+    [client start:@"7WEWXD7RHXVTB91P111A"]; // Put your device's UID here.
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(receiveBuffer:) name:@"client" object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(hardwareShowImage:) name:@"image" object:nil];
+    
+    CGFloat screenWidth = [UIScreen mainScreen].bounds.size.width;
+    CGRect rect = CGRectMake(0, 20, screenWidth, screenWidth * 3 / 4);
+    UIView *containerView = [[UIView alloc] initWithFrame:rect];
+    
+    self.imageView = [[UIImageView alloc] initWithFrame:rect];
+    self.imageView.image = [self getBlackImage];
+    
+    self.indicatorView = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleWhiteLarge];
+    self.indicatorView.frame = CGRectMake(rect.size.width / 2, rect.size.height / 2, self.indicatorView.frame.size.width, self.indicatorView.frame.size.height);
+    
+    [containerView addSubview:self.imageView];
+    [containerView addSubview:self.indicatorView];
+    [self.view addSubview:containerView];
+    [self.indicatorView startAnimating];
+    
+//    self.videoLayer = [[AVSampleBufferDisplayLayer alloc] init];
+//    self.videoLayer.frame = self.view.frame;
+//    self.videoLayer.bounds = self.view.bounds;
+//    self.videoLayer.videoGravity = AVLayerVideoGravityResizeAspect;
+//    
+//    CMTimebaseRef controlTimeBase;
+//    CMTimebaseCreateWithMasterClock(CFAllocatorGetDefault(), CMClockGetHostTimeClock(), &controlTimeBase);
+//    CMTimebaseSetTime(self.videoLayer.controlTimebase, kCMTimeZero);
+//    CMTimebaseSetRate(self.videoLayer.controlTimebase, 1.0);
+//    [[self.view layer] addSublayer:self.videoLayer];
+    
+    [self initData];
+}
+
+- (void)initData {
+    
+    _decoder = [[H264Decoder alloc] init];
+//    两种方式效果对比
+    [_decoder videoDecoder_init];
+    [self initDecoder];  //只初始化一次
+    _dispatchQueue  = dispatch_queue_create("showView", DISPATCH_QUEUE_SERIAL);
+    _videoFrames    = [NSMutableArray array];
+    
+//    硬解码初始化
+    _hardwareDecoder = [[HardwareDecoder alloc] init];
+    _hardwareDecoder.delegate = self;
+}
+
+#pragma mark select decode way
+- (void)receiveBuffer:(NSNotification *)notification{
+    NSDictionary *dict = (NSDictionary *)notification.object;
+    NSData *dataBuffer = [dict objectForKey:@"data"];
+    NSNumber *number = [dict objectForKey:@"size"];
+    uint8_t *buf = (uint8_t *)[dataBuffer bytes];
+    
+    if (!isFindIFrame && ![self detectIFrame:buf size:[number intValue]]) {
+        return;
+    }
+
+//    1、转换成UIImage
+//    [self ffmpegDecode_v1:buf size:[number intValue]];
+    
+//    2、直接使用YUV数据，OpenGL绘图
+//    [self decodeFrames:buf size:[number intValue]];
+//    
+//    dispatch_time_t popTime = dispatch_time(DISPATCH_TIME_NOW, 0.1 * NSEC_PER_SEC);
+//    dispatch_after(popTime, dispatch_get_main_queue(), ^{
+//        [self tick];
+//    });
+    
+//    3、使用CVPixelBufferRef数据，OpenGL绘图
+//    [self decodeFramesPixel:buf size:[number intValue]];
+//    [self decodeFramesToImage:buf size:[number intValue]];
+    
+//    4、使用硬解码
+//    [_hardwareDecoder receivedRawVideoFrame:buf withSize:[number intValue]];
+    [_hardwareDecoder hardwareDecode:buf size:[number intValue]];
+    if (!_firstDecoded) {
+        _firstDecoded = YES;
+                _glLayer = [[AAPLEAGLLayer alloc] initWithFrame:CGRectMake(0, 20, self.view.frame.size.width, (self.view.frame.size.width * 9)/16 )] ;
+                [self.view.layer addSublayer:_glLayer];
+        
+//        _cameraView = [[CameraShowGLView alloc] initWithFrame:CGRectMake(0, 20, self.view.frame.size.width, (self.view.frame.size.width * 9)/16 )];
+//        [self.view addSubview:_cameraView];
+    }
+    
+//    CVPixelBufferRef outputPixelBuffer = [_hardwareDecoder receivedRawVideoFrame:buf withSize:[number intValue]];
+//    if (outputPixelBuffer) {
+//        int height = CVPixelBufferGetHeight(outputPixelBuffer);
+//        int width = CVPixelBufferGetWidth(outputPixelBuffer);
+//        int perrowByte = CVPixelBufferGetBytesPerRow(outputPixelBuffer);
+//        int planeCount = CVPixelBufferGetPlaneCount(outputPixelBuffer);
+//        int dataSize = CVPixelBufferGetDataSize(outputPixelBuffer);
+//        
+//        self.imageView.image = [self convertImageWithPixel:outputPixelBuffer];
+//    }
+
+    
+}
+
+#pragma mark 各种解码方式
+
+- (void)decodeFrames:(uint8_t *)nalBuffer size:(int)inSize {
+    
+    NSArray *frames = [_decoder videoDecoder_decode:nalBuffer size:inSize];
+    [self addFrames:frames];
+    
+    if (!_firstDecoded) {
+        
+        _firstDecoded = YES;
+        
+        KxVideoFrame *tempFrame = [frames firstObject];
+        CGFloat screenWidth = [UIScreen mainScreen].bounds.size.width;
+        CGRect rect = CGRectMake(0, 20, screenWidth, screenWidth * tempFrame.height / tempFrame.width);
+        _glView = [[KxMovieGLView alloc] initWithFrame:rect decoder:_decoder];
+        [self.view addSubview:_glView];
+    }
+}
+
+- (void)decodeFramesToImage:(uint8_t *)nalBuffer size:(int)inSize {
+
+    UIImage *image = [_decoder videoDecoder_decodeToImage:nalBuffer size:inSize];
+    if (image) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self updateView:image];
+        });
+    }
+}
+
+- (void)decodeFramesPixel:(uint8_t *)nalBuffer size:(int)inSize {
+
+    CVPixelBufferRef pixelBuffer = [_decoder videoDecoder_decodeToPixel:nalBuffer size:inSize];
+    if (!_firstDecoded) {
+        _firstDecoded = YES;
+//        _glLayer = [[AAPLEAGLLayer alloc] initWithFrame:CGRectMake(0, 20, self.view.frame.size.width, (self.view.frame.size.width * 9)/16 )] ;
+//        [self.view.layer addSublayer:_glLayer];
+        
+        _cameraView = [[CameraShowGLView alloc] initWithFrame:CGRectMake(0, 20, self.view.frame.size.width, (self.view.frame.size.width * 9)/16 )];
+        [self.view addSubview:_cameraView];
+    }
+    
+    if (pixelBuffer) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+//            _glLayer.pixelBuffer = pixelBuffer;
+//            [_cameraView renderVideo:pixelBuffer];
+            self.imageView.image = [self convertImageWithPixel:pixelBuffer];
+        });
+        CVPixelBufferRelease(pixelBuffer);
+    }
+}
+
+- (void)addFrames:(NSArray *)frames {
+
+    @synchronized(_videoFrames) {
+        for (KxMovieFrame *aFrame in frames) {
+            [_videoFrames addObject:aFrame];
+        }
+    }
+}
+
+
+- (BOOL)detectIFrame:(uint8_t *)nalBuffer size:(int)size {
+
+    NSString *string1 = @"";
+    int dataLength = size > 500 ? 500 : size;
+    for (int i = 0; i < dataLength; i ++) {
+        NSString *temp = [NSString stringWithFormat:@"%x", nalBuffer[i]&0xff];
+        if ([temp length] == 1) {
+            temp = [NSString stringWithFormat:@"0%@", temp];
+        }
+        string1 = [string1 stringByAppendingString:temp];
+    }
+    NSLog(@"%@",string1);
+    NSRange range = [string1 rangeOfString:@"00000000165"];
+    if (range.location == NSNotFound) {
+        isFindIFrame = NO;
+        return NO;
+    } else {
+        isFindIFrame = YES;
+        [self.indicatorView stopAnimating];
+        return YES;
+    }
+
+}
+
+- (void)tick {
+
+    [self presentFrame];
+    dispatch_time_t popTime = dispatch_time(DISPATCH_TIME_NOW, 1.0 * NSEC_PER_SEC);
+    dispatch_after(popTime, dispatch_get_main_queue(), ^{
+        [self tick];
+    });
+}
+
+- (void)presentFrame {
+
+    KxVideoFrame *aFrame;
+    @synchronized(_videoFrames) {
+        
+        if (_videoFrames.count > 0) {
+            
+            aFrame = _videoFrames[0];
+            [_videoFrames removeObjectAtIndex:0];
+            if (_glView) {
+                
+                [_glView render:aFrame];
+                
+            }
+        }
+    }
+}
+
+- (void)ffmpegDecode_v1:(uint8_t *)nalBuffer size:(int)inSize {
+    
+    int nWidth = 0, nHeight = 0;
+//    uint8_t *buffOut, *rgbBuffer;
+    
+    
+//    int nWidth = 0, nHeight = 0, outSize = 152064;
+//    uint8_t  buffOut[1382400];
+//    uint8_t  rgbBuffer[2764800];
+//    memset(buffOut,0,1382400);
+    
+    //    流畅
+//        int nWidth = 0, nHeight = 0, outSize = 152064;
+//        uint8_t  buffOut[152064];
+//        uint8_t  rgbBuffer[304128];
+//        memset(buffOut,0,152064);
+
+    AVPacket packet;
+    av_init_packet(&packet);
+    packet.size = inSize;
+    packet.data = nalBuffer;
+    int comsumedSize = 0;
+
+    int gotframe = 0;
+    //解码前需分配内存空间
+    comsumedSize = avcodec_decode_video2(codecCtx, frame, &gotframe, &packet);
+    if (comsumedSize < 0) {
+        NSLog(@"Decode ERROR!!!");
+        return;
+    }
+    
+    if (!gotframe) {
+//        fflush(stdout);
+        return;
+    }
+    nWidth = codecCtx->width;
+    nHeight = codecCtx->height;
+//    memset(buffOut, 0, 1382400);
+//    rgbSize = nWidth * nHeight * 3;
+//    outSize = rgbSize / 2;
+//    buffOut = (uint8_t *)malloc(outSize);
+//    memset(buffOut, 0, outSize);
+//    rgbBuffer = (uint8_t *)malloc(rgbSize);
+    
+    pgm_save2(frame->data[0], frame->linesize[0], nWidth, nHeight, buffOut);
+    pgm_save2(frame->data[1], frame->linesize[1], nWidth / 2, nHeight / 2, buffOut + nWidth * nHeight);
+    pgm_save2(frame->data[2], frame->linesize[2], nWidth / 2, nHeight / 2, buffOut + nWidth * nHeight * 5 /4);
+    
+    if (!_firstDecoded) {
+        _firstDecoded = YES;
+//            _glLayer = [[AAPLEAGLLayer alloc] initWithFrame:CGRectMake(0, 20, self.view.frame.size.width, (self.view.frame.size.width * 9)/16 )] ;
+//            [self.view.layer addSublayer:_glLayer];
+        
+        _cameraView = [[CameraShowGLView alloc] initWithFrame:CGRectMake(0, 20, self.view.frame.size.width, (self.view.frame.size.width * 9)/16 )];
+        [self.view addSubview:_cameraView];
+        
+        InitConvtTbl();
+    }
+
+    
+    i420_to_rgb24(buffOut, rgbBuffer, nWidth, nHeight);
+    flip(rgbBuffer, nWidth, nHeight);
+    [self decodeAndShow:rgbBuffer length:nWidth * nHeight * 3 nWidth:nWidth nHeight:nHeight];
+    
+//    free(buffOut);
+//    free(rgbBuffer);
+//    buffOut = NULL;
+//    rgbBuffer = NULL;
+    av_free_packet(&packet);
+}
+
+- (void)initDecoder {
+    
+    buffOut = (uint8_t *)malloc(1382400);
+    rgbBuffer = (uint8_t *)malloc(2764800);
+
+    avcodec_register_all();
+    frame = av_frame_alloc();
+    AVCodec *codec = avcodec_find_decoder(AV_CODEC_ID_H264);
+    codecCtx = avcodec_alloc_context3(codec);
+    int ret = avcodec_open2(codecCtx, codec, nil);
+    if (ret != 0){
+        NSLog(@"open codec failed :%d",ret);
+    }
+    
+    frame = av_frame_alloc();
+}
+
+void pgm_save2(unsigned char *buf,int wrap, int xsize,int ysize,uint8_t *pDataOut)
+{
+    int i;
+    for(i=0;i<ysize;i++)
+    {
+        memcpy(pDataOut+i*xsize, buf + /*(ysize-i)*/i * wrap, xsize);
+    }
+    
+}
+
+//##############h264Demo############
+//-----只能解出I帧，P帧的数据都解不出来---
+//- (void)ffmpegDecode:(uint8_t *)nalBuffer size:(int)inSize {
+//
+//    X264_H handle = VideoDecoder_Init();
+//    char outBuffer[505200];
+//    memset(outBuffer, 0, 505200);
+//    
+//    char  rgbBuffer[230400];
+//    memset(rgbBuffer, 0, 230400);
+//    
+//    int outSize = 505200, nWidth, nHeight;
+//
+//    
+//    NSString *string = @"";
+//    int dataLength = inSize > 500 ? 500 : inSize;
+//    for (int i = 0; i < dataLength; i ++) {
+//        NSString *temp = [NSString stringWithFormat:@"%x", nalBuffer[i]&0xff];
+//        if ([temp length] == 1) {
+//            temp = [NSString stringWithFormat:@"0%@", temp];
+//        }
+//        string = [string stringByAppendingString:temp];
+//    }
+////    NSLog(@"%@", string);
+//    
+//    int iTemp = VideoDecoder_Decode(handle, nalBuffer, inSize, outBuffer, outSize, &nWidth, &nHeight);
+//    if (iTemp == 0) {
+//        i420_to_rgb24(outBuffer, rgbBuffer, nWidth, nHeight);
+//        flip(rgbBuffer, nWidth, nHeight);
+//        [self decodeAndShow:rgbBuffer length:nWidth*nHeight*3 nWidth:nWidth nHeight:nHeight];
+//    }
+//}
+//
+void flip(uint8_t *pRGBBuffer, int nWidth, int nHeight)
+{
+    char temp[nWidth*3];
+    for (int i = 0; i<nHeight/2; i++) {
+        memcpy(temp, pRGBBuffer + i*nWidth*3, nWidth*3);
+        memcpy(pRGBBuffer + i*nWidth*3, pRGBBuffer + (nHeight - i - 1)*nWidth*3, nWidth*3);
+        memcpy(pRGBBuffer + (nHeight - i - 1)*nWidth*3, temp, nWidth*3);
+    }
+}
+
+//######################硬解码#####################
+//-----暂不支持流媒体，只支持本地文件解码---------------
+- (uint8_t *)transfer:(char *)temp size:(int)size{
+
+    Byte bytes[size];  ///3ds key的Byte 数组， 128位
+    int j=0;
+    for(int i=0;i<strlen(temp);i++)
+    {
+        
+        
+        int int_ch;  /// 两位16进制数转化后的10进制数
+        unichar hex_char1 = temp[i]; ////两位16进制数中的第一位(高位*16)
+        int int_ch1;
+        if(hex_char1 >= '0' && hex_char1 <='9')
+            int_ch1 = (hex_char1-48)*16;   //// 0 的Ascll - 48
+        else if(hex_char1 >= 'A' && hex_char1 <='F')
+            int_ch1 = (hex_char1-55)*16; //// A 的Ascll - 65
+        else
+            int_ch1 = (hex_char1-87)*16; //// a 的Ascll - 97
+        i++;
+        unichar hex_char2 = temp[i]; ///两位16进制数中的第二位(低位)
+        int int_ch2;
+        if(hex_char2 >= '0' && hex_char2 <='9')
+            int_ch2 = (hex_char2-48); //// 0 的Ascll - 48
+        else if(hex_char1 >= 'A' && hex_char1 <='F')
+            int_ch2 = hex_char2-55; //// A 的Ascll - 65
+        else 
+            int_ch2 = hex_char2-87; //// a 的Ascll - 97
+        int_ch = int_ch1+int_ch2;
+//        NSLog(@"int_ch=%d",int_ch);
+        bytes[j] = int_ch;  ///将转化后的数放入Byte数组里
+        j++;
+    }
+    NSData *data = [NSData dataWithBytes:bytes length:size];
+    return (uint8_t *)[data bytes];
+}
+
+
+
+- (void)hardwareShowImage:(NSNotification *)notification {
+    UIImage *image = (UIImage *)notification.object;
+    self.imageView.image = image;
+    NSLog(@"-------hardwareShowImage-----");
+}
+
+- (CGImageRef) cgImageFromSampleBuffer:(CMSampleBufferRef) sampleBuffer // Create a CGImageRef from sample buffer data
+{
+    CVImageBufferRef imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
+    CVPixelBufferLockBaseAddress(imageBuffer,0);        // Lock the image buffer
+    
+    uint8_t *baseAddress = (uint8_t *)CVPixelBufferGetBaseAddressOfPlane(imageBuffer, 0);   // Get information of the image
+    size_t bytesPerRow = CVPixelBufferGetBytesPerRow(imageBuffer);
+    size_t width = CVPixelBufferGetWidth(imageBuffer);
+    size_t height = CVPixelBufferGetHeight(imageBuffer);
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    
+    CGContextRef newContext = CGBitmapContextCreate(baseAddress, width, height, 8, bytesPerRow, colorSpace, kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst);
+    CGImageRef newImage = CGBitmapContextCreateImage(newContext);
+    CGContextRelease(newContext);
+    
+    CGColorSpaceRelease(colorSpace);
+    CVPixelBufferUnlockBaseAddress(imageBuffer,0);
+    /* CVBufferRelease(imageBuffer); */  // do not call this!
+    
+    return newImage;
+}
+
+// Create a UIImage from sample buffer data
+- (UIImage *) imageFromSampleBuffer:(CMSampleBufferRef) sampleBuffer
+{
+    // Get a CMSampleBuffer's Core Video image buffer for the media data
+    CVImageBufferRef imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
+    // Lock the base address of the pixel buffer
+    CVPixelBufferLockBaseAddress(imageBuffer, 0);
+    
+    // Get the number of bytes per row for the pixel buffer
+    void *baseAddress = CVPixelBufferGetBaseAddress(imageBuffer);
+    
+    // Get the number of bytes per row for the pixel buffer
+    size_t bytesPerRow = CVPixelBufferGetBytesPerRow(imageBuffer);
+    // Get the pixel buffer width and height
+    size_t width = CVPixelBufferGetWidth(imageBuffer);
+    size_t height = CVPixelBufferGetHeight(imageBuffer);
+    
+    // Create a device-dependent RGB color space
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    
+    // Create a bitmap graphics context with the sample buffer data
+    CGContextRef context = CGBitmapContextCreate(baseAddress, width, height, 8,
+                                                 bytesPerRow, colorSpace, kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst);
+    // Create a Quartz image from the pixel data in the bitmap graphics context
+    CGImageRef quartzImage = CGBitmapContextCreateImage(context);
+    // Unlock the pixel buffer
+    CVPixelBufferUnlockBaseAddress(imageBuffer,0);
+    
+    // Free up the context and color space
+    CGContextRelease(context);
+    CGColorSpaceRelease(colorSpace);
+    
+    // Create an image object from the Quartz image
+    UIImage *image = [UIImage imageWithCGImage:quartzImage];
+    
+    // Release the Quartz image
+    CGImageRelease(quartzImage);
+    
+    return (image);
+}
+
+// Works only if pixel format is kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+- (UIImage *)convertSampleBufferToUIImageSampleBuffer:(CMSampleBufferRef)sampleBuffer{
+    
+    // Get a CMSampleBuffer's Core Video image buffer for the media data
+    CVImageBufferRef imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
+    // Lock the base address of the pixel buffer
+    CVPixelBufferLockBaseAddress(imageBuffer, 0);
+    
+    // Get the number of bytes per row for the pixel buffer
+    void *baseAddress = CVPixelBufferGetBaseAddress(imageBuffer);
+    
+    // Get the number of bytes per row for the pixel buffer
+    size_t bytesPerRow = CVPixelBufferGetBytesPerRow(imageBuffer);
+    // Get the pixel buffer width and height
+    size_t width = CVPixelBufferGetWidth(imageBuffer);
+    size_t height = CVPixelBufferGetHeight(imageBuffer);
+    
+    // Create a device-dependent RGB color space
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    
+    // Create a bitmap graphics context with the sample buffer data
+    CGContextRef context = CGBitmapContextCreate(baseAddress, width, height, 8,
+                                                 bytesPerRow, colorSpace, kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst);
+    // Create a Quartz image from the pixel data in the bitmap graphics context
+    CGImageRef quartzImage = CGBitmapContextCreateImage(context);
+    // Unlock the pixel buffer
+    CVPixelBufferUnlockBaseAddress(imageBuffer,0);
+    
+    // Free up the context and color space
+    CGContextRelease(context);
+    CGColorSpaceRelease(colorSpace);
+    
+    // Create an image object from the Quartz image
+    //UIImage *image = [UIImage imageWithCGImage:quartzImage];
+    UIImage *image = [UIImage imageWithCGImage:quartzImage scale:1.0f orientation:UIImageOrientationRight];
+    
+    // Release the Quartz image
+    CGImageRelease(quartzImage);
+    
+    return image;
+    
+}
+
+#pragma mark 硬解码回调
+- (void)displayDecodedFrame:(CVImageBufferRef)imageBuffer {
+
+    if(imageBuffer)
+    {
+//        NSLog(@"renderVideo");
+        _glLayer.pixelBuffer = imageBuffer;
+//        [_cameraView renderVideo:imageBuffer];
+        CVPixelBufferRelease(imageBuffer);
+    }
+}
+
+#pragma mark public method
+-(void)decodeAndShow : (uint8_t *) pFrameRGB length:(int)len nWidth:(int)nWidth nHeight:(int)nHeight
+{
+    
+    
+    //NSLog(@"decode ret = %d readLen = %d\n", ret, nFrameLen);
+    if(len > 0)
+    {
+        CGBitmapInfo bitmapInfo = kCGBitmapByteOrderDefault;
+        CFDataRef data = CFDataCreateWithBytesNoCopy(kCFAllocatorDefault, pFrameRGB, nWidth*nHeight*3,kCFAllocatorNull);
+        CGDataProviderRef provider = CGDataProviderCreateWithCFData(data);
+        CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+        
+        CGImageRef cgImage = CGImageCreate(nWidth,
+                                           nHeight,
+                                           8,
+                                           24,
+                                           nWidth*3,
+                                           colorSpace,
+                                           bitmapInfo,
+                                           provider,
+                                           NULL,
+                                           YES,
+                                           kCGRenderingIntentDefault);
+        CGColorSpaceRelease(colorSpace);
+        UIImage* image = [[UIImage alloc]initWithCGImage:cgImage];   //crespo modify 20111020
+        
+        //add by bing
+//        CVPixelBufferRef pixelBuffer = [self pixelBufferFromCGImage:cgImage];
+        
+        
+        CGImageRelease(cgImage);
+        CGDataProviderRelease(provider);
+        CFRelease(data);
+//        dispatch_async(dispatch_get_main_queue(), ^{
+//            [_cameraView renderVideo:pixelBuffer];
+//        });
+        [self performSelectorOnMainThread:@selector(updateView:) withObject:image waitUntilDone:YES];
+    }
+    
+    return;
+}
+
+-(void)updateView:(UIImage*)newImage
+{
+    //    NSLog(@"显示新画面");
+    self.imageView.image = newImage;
+    
+//    使用OpenGL播放，想解决iPhone4的卡顿问题，但是没有效果
+//    CVPixelBufferRef pixelBuffer = [self pixelBufferFromCGImage:newImage.CGImage];
+//    _glLayer.pixelBuffer = pixelBuffer;
+//    [_cameraView renderVideo:pixelBuffer];
+}
+
+- (CVPixelBufferRef)pixelBufferFromCGImage:(CGImageRef)image{
+    
+    NSDictionary *options = [NSDictionary dictionaryWithObjectsAndKeys:
+                             [NSNumber numberWithBool:YES], kCVPixelBufferCGImageCompatibilityKey,
+                             [NSNumber numberWithBool:YES], kCVPixelBufferCGBitmapContextCompatibilityKey,
+                             nil];
+    
+    CVPixelBufferRef pxbuffer = NULL;
+    
+    CGFloat frameWidth = CGImageGetWidth(image);
+    CGFloat frameHeight = CGImageGetHeight(image);
+    
+    CVReturn status = CVPixelBufferCreate(kCFAllocatorDefault,
+                                          frameWidth,
+                                          frameHeight,
+                                          kCVPixelFormatType_32ARGB,
+                                          (__bridge CFDictionaryRef) options,
+                                          &pxbuffer);
+    
+    NSParameterAssert(status == kCVReturnSuccess && pxbuffer != NULL);
+    
+    CVPixelBufferLockBaseAddress(pxbuffer, 0);
+    void *pxdata = CVPixelBufferGetBaseAddress(pxbuffer);
+    NSParameterAssert(pxdata != NULL);
+    
+    CGColorSpaceRef rgbColorSpace = CGColorSpaceCreateDeviceRGB();
+    
+    CGContextRef context = CGBitmapContextCreate(pxdata,
+                                                 frameWidth,
+                                                 frameHeight,
+                                                 8,
+                                                 CVPixelBufferGetBytesPerRow(pxbuffer),
+                                                 rgbColorSpace,
+                                                 (CGBitmapInfo)kCGImageAlphaNoneSkipFirst);
+    NSParameterAssert(context);
+    CGContextConcatCTM(context, CGAffineTransformIdentity);
+    CGContextDrawImage(context, CGRectMake(0,
+                                           0,
+                                           frameWidth,
+                                           frameHeight),
+                       image);
+    CGColorSpaceRelease(rgbColorSpace);
+    CGContextRelease(context);
+    
+    CVPixelBufferUnlockBaseAddress(pxbuffer, 0);
+    
+    return pxbuffer;
+}
+
+- (UIImage *)convertImageWithPixel:(CVPixelBufferRef)pixelBuffer {
+    
+    UIImage *uiImage = nil;
+    if (pixelBuffer){
+        CIImage *ciImage = [CIImage imageWithCVPixelBuffer:pixelBuffer];
+        uiImage = [UIImage imageWithCIImage:ciImage];
+        UIGraphicsBeginImageContext(self.view.bounds.size);
+        [uiImage drawInRect:self.view.bounds];
+        uiImage = UIGraphicsGetImageFromCurrentImageContext();
+        UIGraphicsEndImageContext();
+    }
+    return uiImage;
+}
+
+- (UIImage *)getBlackImage {
+
+    CGSize imageSize = CGSizeMake(50, 50);
+    UIGraphicsBeginImageContextWithOptions(imageSize, 0, [UIScreen mainScreen].scale);
+    [[UIColor colorWithRed:0 green:0 blue:0 alpha:1.0] set];
+    UIRectFill(CGRectMake(0, 0, imageSize.width, imageSize.height));
+    UIImage *pressedColorImg = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return pressedColorImg;
+}
+
+@end

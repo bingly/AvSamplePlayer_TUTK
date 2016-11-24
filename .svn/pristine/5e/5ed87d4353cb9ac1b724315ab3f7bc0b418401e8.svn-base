@@ -1,0 +1,92 @@
+////ffmpeg simple player
+////
+////媒资检索系统子系统
+////
+////2013 雷霄骅 leixiaohua1020@126.com
+////中国传媒大学/数字电视技术
+////
+//#include "stdafx.h"
+//
+//int _tmain(int argc, _TCHAR* argv[])
+//{
+//    AVFormatContext	*pFormatCtx;
+//    int				i, videoindex;
+//    AVCodecContext	*pCodecCtx;
+//    AVCodec			*pCodec;
+//    char filepath[]="北京移动开发者大会茶歇视频2.flv";
+//    av_register_all();
+//    avformat_network_init();
+//    pFormatCtx = avformat_alloc_context();
+//    if(avformat_open_input(&pFormatCtx,filepath,NULL,NULL)!=0){
+//        printf("无法打开文件\n");
+//        return -1;
+//    }
+//    
+//    ......
+//    
+//    AVFrame	*pFrame,*pFrameYUV;
+//    pFrame=avcodec_alloc_frame();
+//    pFrameYUV=avcodec_alloc_frame();
+//    uint8_t *out_buffer;
+//    
+//    out_buffer=new uint8_t[avpicture_get_size(PIX_FMT_RGB24, pCodecCtx->width, pCodecCtx->height)];
+//    avpicture_fill((AVPicture *)pFrameYUV, out_buffer, PIX_FMT_RGB24, pCodecCtx->width, pCodecCtx->height);
+//    /*
+//     out_buffer=new uint8_t[avpicture_get_size(PIX_FMT_YUV420P, pCodecCtx->width, pCodecCtx->height)];
+//     avpicture_fill((AVPicture *)pFrameYUV, out_buffer, PIX_FMT_YUV420P, pCodecCtx->width, pCodecCtx->height);*/
+//    
+//    /*
+//     out_buffer=new uint8_t[avpicture_get_size(PIX_FMT_UYVY422, pCodecCtx->width, pCodecCtx->height)];
+//     avpicture_fill((AVPicture *)pFrameYUV, out_buffer, PIX_FMT_UYVY422, pCodecCtx->width, pCodecCtx->height);
+//     out_buffer=new uint8_t[avpicture_get_size(PIX_FMT_YUV422P, pCodecCtx->width, pCodecCtx->height)];
+//     avpicture_fill((AVPicture *)pFrameYUV, out_buffer, PIX_FMT_YUV422P, pCodecCtx->width, pCodecCtx->height);*/
+//    
+//    ......
+//    
+//    FILE *output=fopen("out.rgb","wb+");
+//    //------------------------------
+//    while(av_read_frame(pFormatCtx, packet)>=0)
+//    {
+//        if(packet->stream_index==videoindex)
+//        {
+//            ret = avcodec_decode_video2(pCodecCtx, pFrame, &got_picture, packet);
+//            
+//            if(ret < 0)
+//            {
+//                printf("解码错误\n");
+//                return -1;
+//            }
+//            if(got_picture)
+//            {
+//                /*img_convert_ctx = sws_getContext(pCodecCtx->width, pCodecCtx->height, pCodecCtx->pix_fmt, pCodecCtx->width, pCodecCtx->height, PIX_FMT_UYVY422, SWS_BICUBIC, NULL, NULL, NULL);
+//                 sws_scale(img_convert_ctx, (const uint8_t* const*)pFrame->data, pFrame->linesize, 0, pCodecCtx->height, pFrameYUV->data, pFrameYUV->linesize);
+//                 img_convert_ctx = sws_getContext(pCodecCtx->width, pCodecCtx->height, pCodecCtx->pix_fmt, pCodecCtx->width, pCodecCtx->height, PIX_FMT_YUV422P, SWS_BICUBIC, NULL, NULL, NULL);
+//                 sws_scale(img_convert_ctx, (const uint8_t* const*)pFrame->data, pFrame->linesize, 0, pCodecCtx->height, pFrameYUV->data, pFrameYUV->linesize);*/
+//                //转换
+//                img_convert_ctx = sws_getContext(pCodecCtx->width, pCodecCtx->height, pCodecCtx->pix_fmt, pCodecCtx->width, pCodecCtx->height, PIX_FMT_RGB24, SWS_BICUBIC, NULL, NULL, NULL);
+//                sws_scale(img_convert_ctx, (const uint8_t* const*)pFrame->data, pFrame->linesize, 0, pCodecCtx->height, pFrameYUV->data, pFrameYUV->linesize);
+//                
+//                
+//                //RGB
+//                fwrite(pFrameYUV->data[0],(pCodecCtx->width)*(pCodecCtx->height)*3,1,output);
+//                /*
+//                 //UYVY
+//                 fwrite(pFrameYUV->data[0],(pCodecCtx->width)*(pCodecCtx->height),2,output);
+//                 //YUV420P
+//                 fwrite(pFrameYUV->data[0],(pCodecCtx->width)*(pCodecCtx->height),1,output);
+//                 fwrite(pFrameYUV->data[1],(pCodecCtx->width)*(pCodecCtx->height)/4,1,output);
+//                 fwrite(pFrameYUV->data[2],(pCodecCtx->width)*(pCodecCtx->height)/4,1,output);
+//                 */
+//                ......
+//                
+//            }
+//        }
+//        av_free_packet(packet);
+//    }
+//    
+//    fclose(output);
+//    
+//    ......
+//    
+//    return 0;
+//}
